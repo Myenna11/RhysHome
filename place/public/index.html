@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Rhysen Place</title>
+<style>
+  :root { --bg:#12141a; --panel:#1c1f27; --line:#2a2e3a; --text:#e8eaf0; --muted:#8b91a3; --accent:#3690ea; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",Arial,sans-serif; overflow:hidden; overscroll-behavior:none; }
+  #top { position:fixed; top:0; left:0; right:0; height:48px; padding:0 14px; padding-top:env(safe-area-inset-top); display:flex; align-items:center; justify-content:space-between; background:linear-gradient(var(--bg),transparent); z-index:5; pointer-events:none; }
+  #top > * { pointer-events:auto; }
+  #title { font-weight:600; letter-spacing:.5px; }
+  #title span { color:var(--accent); }
+  #meta { font-size:12px; color:var(--muted); display:flex; gap:10px; align-items:center; }
+  #meta button { background:none; border:1px solid var(--line); color:var(--muted); border-radius:14px; padding:3px 10px; font-size:12px; }
+  #stage { position:fixed; inset:0; touch-action:none; cursor:crosshair; }
+  canvas { position:absolute; left:0; top:0; image-rendering:pixelated; image-rendering:crisp-edges; transform-origin:0 0; }
+  #info { position:fixed; left:50%; transform:translateX(-50%); bottom:220px; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:8px 12px; font-size:13px; color:var(--muted); white-space:nowrap; z-index:5; opacity:0; transition:opacity .15s; pointer-events:none; }
+  #info.show { opacity:1; }
+  #info b { color:var(--text); }
+  #bottom { position:fixed; left:0; right:0; bottom:0; background:var(--panel); border-top:1px solid var(--line); padding:10px 12px calc(12px + env(safe-area-inset-bottom)); z-index:5; }
+  #palette { display:grid; grid-template-columns:repeat(11,1fr); gap:6px; margin-bottom:10px; }
+  .sw { aspect-ratio:1; border-radius:6px; border:2px solid transparent; transition:transform .1s; }
+  .sw.on { border-color:#fff; transform:scale(1.15); box-shadow:0 0 0 1px #000; }
+  #row { display:flex; gap:10px; align-items:center; }
+  #who { font-size:13px; color:var(--muted); flex:1; }
+  #who b { color:var(--text); }
+  #go { background:var(--accent); color:#fff; border:0; border-radius:12px; padding:12px 26px; font-size:16px; font-weight:600; min-width:120px; }
+  #go:disabled { background:#2a3140; color:var(--muted); }
+  #ask { position:fixed; inset:0; background:rgba(0,0,0,.7); display:flex; align-items:center; justify-content:center; z-index:20; }
+  #ask .card { background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:24px; width:min(320px,86vw); text-align:center; }
+  #ask h2 { margin:0 0 6px; font-size:20px; }
+  #ask p { margin:0 0 18px; color:var(--muted); font-size:13px; }
+  #ask .opts { display:flex; gap:10px; justify-content:center; margin-bottom:12px; }
+  #ask .opts button { flex:1; padding:12px; border-radius:12px; border:1px solid var(--line); background:var(--bg); color:var(--text); font-size:16px; }
+  #ask input { width:100%; padding:10px; border-radius:10px; border:1px solid var(--line); background:var(--bg); color:var(--text); font-size:14px; text-align:center; }
+  #toast { position:fixed; top:calc(60px + env(safe-area-inset-top)); left:50%; transform:translateX(-50%); background:#000c; color:#fff; padding:8px 14px; border-radius:10px; font-size:13px; z-index:30; opacity:0; transition:opacity .2s; pointer-events:none; }
+  #toast.show { opacity:1; }
+</style>
+</head>
+<body>
+<div id="top">
+  <div id="title">Rhysen <span>Place</span></div>
+  <div id="meta"><span id="online">·</span><button id="replay">回放</button></div>
+</div>
+<div id="stage"><canvas id="cv"></canvas><canvas id="ov"></canvas></div>
+<div id="info"></div>
+<div id="bottom">
+  <div id="palette"></div>
+  <div id="row">
+    <div id="who">你是 <b id="me"></b><br><span id="pos">点一格试试</span></div>
+    <button id="go" disabled>放</button>
+  </div>
+</div>
+<div id="ask" style="display:none">
+  <div class="card">
+    <h2>你是谁呀</h2>
+    <p>一人一次放一个像素，可以盖掉对方的</p>
+    <div class="opts"><button data-n="知知">知知</button><button data-n="望舒">望舒</button></div>
+    <input id="nm" placeholder="或者输个别的名字，回车">
+  </div>
+</div>
+<div id="toast"></div>
+<script>
+const $ = s => document.querySelector(s);
+let W, H, PAL, CD, cells, owners, times;
+let me = localStorage.getItem('place_name') || '';
+let sel = null, color = 20, nextAt = 0;
+const cv = $('#cv'), ctx = cv.getContext('2d');
+const ov = $('#ov'), octx = ov.getContext('2d');
+const CELL = 10;
+let scale = 1, tx = 0, ty = 0;
+
+function toast(m) { const t = $('#toast'); t.textContent = m; t.classList.add('show'); clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove('show'), 1800); }
+
+function askName() {
+  $('#ask').style.display = 'flex';
+  document.querySelectorAll('#ask .opts button').forEach(b => b.onclick = () => setName(b.dataset.n));
+  $('#nm').onkeydown = e => { if (e.key === 'Enter' && e.target.value.trim()) setName(e.target.value.trim()); };
+}
+function setName(n) { me = n; localStorage.setItem('place_name', n); $('#me').textContent = n; $('#ask').style.display = 'none'; checkCooldown(); }
+
+function applyT() { const t = `translate(${tx}px,${ty}px) scale(${scale})`; cv.style.transform = t; ov.style.transform = t; const g = scale * CELL > 14; if (g !== gridOn) { gridOn = g; drawSel(); } }
+let gridOn = false;
+function drawAll() { for (let i = 0; i < cells.length; i++) drawCell(i % W, (i / W) | 0, cells[i]); }
+function drawCell(x, y, c) { ctx.fillStyle = PAL[c]; ctx.fillRect(x * CELL, y * CELL, CELL, CELL); }
+function drawSel() {
+  octx.clearRect(0, 0, ov.width, ov.height);
+  if (gridOn) { octx.strokeStyle = 'rgba(0,0,0,.12)'; octx.lineWidth = 0.5; for (let x = 0; x <= W; x++) { octx.beginPath(); octx.moveTo(x * CELL, 0); octx.lineTo(x * CELL, H * CELL); octx.stroke(); } for (let y = 0; y <= H; y++) { octx.beginPath(); octx.moveTo(0, y * CELL); octx.lineTo(W * CELL, y * CELL); octx.stroke(); } }
+  if (!sel) return;
+  octx.lineWidth = 2; octx.strokeStyle = '#fff'; octx.strokeRect(sel.x * CELL + 1, sel.y * CELL + 1, CELL - 2, CELL - 2);
+  octx.lineWidth = 1; octx.strokeStyle = '#000'; octx.strokeRect(sel.x * CELL + 2.5, sel.y * CELL + 2.5, CELL - 5, CELL - 5);
+  octx.fillStyle = PAL[color] + 'aa'; octx.fillRect(sel.x * CELL + 3, sel.y * CELL + 3, CELL - 6, CELL - 6);
+}
+function ago(t) { const s = ((Date.now() - t) / 1000) | 0; if (s < 60) return s + '秒前'; if (s < 3600) return ((s / 60) | 0) + '分钟前'; if (s < 86400) return ((s / 3600) | 0) + '小时前'; return ((s / 86400) | 0) + '天前'; }
+function showInfo() {
+  const el = $('#info');
+  if (!sel) { el.classList.remove('show'); return; }
+  const i = sel.y * W + sel.x;
+  el.innerHTML = owners[i] ? `(${sel.x}, ${sel.y}) · <b>${owners[i]}</b> 放的 · ${ago(times[i])}` : `(${sel.x}, ${sel.y}) · 还没人动过`;
+  el.style.bottom = (panelH() + 10) + 'px'; el.classList.add('show');
+  $('#pos').textContent = `选中 (${sel.x}, ${sel.y})`;
+}
+
+function panelH() { return $('#bottom').offsetHeight; }
+function fit() {
+  $('#info').style.bottom = (panelH() + 10) + 'px';
+  const vw = innerWidth, vh = innerHeight - panelH() - 56;
+  scale = Math.min(vw / (W * CELL), vh / (H * CELL)) * 0.92;
+  tx = (vw - W * CELL * scale) / 2; ty = 56 + (vh - H * CELL * scale) / 2;
+  applyT();
+}
+
+// 手势：拖动/双指缩放/点选
+const stage = $('#stage');
+const ptrs = new Map(); let moved = false, start = null, pinch0 = null;
+stage.addEventListener('pointerdown', e => {
+  stage.setPointerCapture(e.pointerId);
+  ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  moved = false; start = { x: e.clientX, y: e.clientY, tx, ty };
+  if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; pinch0 = { d: Math.hypot(a.x - b.x, a.y - b.y), s: scale, cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2, tx, ty }; }
+});
+stage.addEventListener('pointermove', e => {
+  if (!ptrs.has(e.pointerId)) return;
+  ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (ptrs.size === 2 && pinch0) {
+    const [a, b] = [...ptrs.values()];
+    const d = Math.hypot(a.x - b.x, a.y - b.y);
+    const ns = Math.max(0.3, Math.min(12, pinch0.s * d / pinch0.d));
+    const cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
+    tx = cx - (pinch0.cx - pinch0.tx) * ns / pinch0.s; ty = cy - (pinch0.cy - pinch0.ty) * ns / pinch0.s; scale = ns;
+    moved = true; applyT(); return;
+  }
+  if (ptrs.size === 1 && start) {
+    const dx = e.clientX - start.x, dy = e.clientY - start.y;
+    if (Math.abs(dx) + Math.abs(dy) > 6) moved = true;
+    if (moved) { tx = start.tx + dx; ty = start.ty + dy; applyT(); }
+  }
+});
+function up(e) {
+  ptrs.delete(e.pointerId);
+  if (ptrs.size < 2) pinch0 = null;
+  if (ptrs.size === 0 && !moved && e.type === 'pointerup') {
+    const x = Math.floor((e.clientX - tx) / scale / CELL), y = Math.floor((e.clientY - ty) / scale / CELL);
+    if (x >= 0 && y >= 0 && x < W && y < H) { sel = { x, y }; drawSel(); showInfo(); updateGo(); }
+  }
+  start = null;
+}
+stage.addEventListener('pointerup', up); stage.addEventListener('pointercancel', up);
+stage.addEventListener('wheel', e => {
+  e.preventDefault();
+  const ns = Math.max(0.3, Math.min(12, scale * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
+  tx = e.clientX - (e.clientX - tx) * ns / scale; ty = e.clientY - (e.clientY - ty) * ns / scale; scale = ns; applyT();
+}, { passive: false });
+
+function buildPalette() {
+  const p = $('#palette'); p.innerHTML = '';
+  PAL.forEach((c, i) => { const d = document.createElement('div'); d.className = 'sw' + (i === color ? ' on' : ''); d.style.background = c; d.onclick = () => { color = i; document.querySelectorAll('.sw').forEach((s, j) => s.classList.toggle('on', j === i)); drawSel(); }; p.appendChild(d); });
+}
+
+function updateGo() {
+  const g = $('#go'); const left = nextAt - Date.now();
+  if (left > 0) { g.disabled = true; g.textContent = (left / 1000).toFixed(left > 10000 ? 0 : 1) + 's'; }
+  else { g.disabled = !sel; g.textContent = '放'; }
+}
+setInterval(updateGo, 100);
+async function checkCooldown() {
+  if (!me) return;
+  const r = await fetch('/api/cooldown?name=' + encodeURIComponent(me)).then(r => r.json());
+  nextAt = Date.now() + (r.wait || 0);
+}
+$('#go').onclick = async () => {
+  if (!sel || !me) return;
+  const r = await fetch('/api/place', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ x: sel.x, y: sel.y, c: color, name: me }) }).then(r => r.json());
+  if (r.error) { toast(r.error); if (r.wait) nextAt = Date.now() + r.wait; return; }
+  nextAt = Date.now() + r.cooldown;
+  if (navigator.vibrate) navigator.vibrate(15);
+};
+
+function apply(ev) {
+  const i = ev.y * W + ev.x; cells[i] = ev.c; owners[i] = ev.name; times[i] = ev.t; drawCell(ev.x, ev.y, ev.c);
+  if (sel && sel.x === ev.x && sel.y === ev.y) showInfo();
+  if (ev.name !== me) toast(`${ev.name} 在 (${ev.x}, ${ev.y}) 放了一格`);
+}
+function connect() {
+  const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
+  ws.onmessage = e => { const m = JSON.parse(e.data); if (m.type === 'place') apply(m); if (m.type === 'online' || m.type === 'hello') $('#online').textContent = (m.n || m.online) + ' 人在线'; };
+  ws.onclose = () => setTimeout(connect, 2000);
+}
+
+$('#replay').onclick = async () => {
+  const h = await fetch('/api/history').then(r => r.json());
+  if (!h.length) return toast('还没有历史');
+  const snap = cells.slice(); ctx.fillStyle = PAL[0]; ctx.fillRect(0, 0, cv.width, cv.height);
+  const step = Math.max(1, Math.floor(h.length / 300)); let i = 0;
+  const tick = () => { for (let k = 0; k < step && i < h.length; k++, i++) drawCell(h[i].x, h[i].y, h[i].c); if (i < h.length) requestAnimationFrame(tick); else { snap.forEach((c, j) => drawCell(j % W, (j / W) | 0, c)); toast('回放完啦'); } };
+  tick();
+};
+
+(async () => {
+  const s = await fetch('/api/state').then(r => r.json());
+  W = s.w; H = s.h; PAL = s.palette; CD = s.cooldown; cells = s.cells; owners = s.owners; times = s.times;
+  cv.width = ov.width = W * CELL; cv.height = ov.height = H * CELL;
+  drawAll(); buildPalette(); fit(); connect();
+  if (me) { $('#me').textContent = me; checkCooldown(); } else askName();
+  addEventListener('resize', fit);
+})();
+</script>
+</body>
+</html>
