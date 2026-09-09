@@ -116,6 +116,7 @@ function fit() {
 const stage = $('#stage');
 const ptrs = new Map(); let moved = false, start = null, pinch0 = null;
 stage.addEventListener('pointerdown', e => {
+  if (e.isPrimary) { ptrs.clear(); pinch0 = null; }
   stage.setPointerCapture(e.pointerId);
   ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
   moved = false; start = { x: e.clientX, y: e.clientY, tx, ty };
@@ -134,7 +135,7 @@ stage.addEventListener('pointermove', e => {
   }
   if (ptrs.size === 1 && start) {
     const dx = e.clientX - start.x, dy = e.clientY - start.y;
-    if (Math.abs(dx) + Math.abs(dy) > 6) moved = true;
+    if (Math.abs(dx) + Math.abs(dy) > 10) moved = true;
     if (moved) { tx = start.tx + dx; ty = start.ty + dy; applyT(); }
   }
 });
@@ -148,6 +149,7 @@ function up(e) {
   start = null;
 }
 stage.addEventListener('pointerup', up); stage.addEventListener('pointercancel', up);
+stage.addEventListener('lostpointercapture', e => { ptrs.delete(e.pointerId); if (ptrs.size < 2) pinch0 = null; });
 stage.addEventListener('wheel', e => {
   e.preventDefault();
   const ns = Math.max(0.3, Math.min(12, scale * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
