@@ -13,6 +13,7 @@ const COOLDOWN = parseInt(process.env.COOLDOWN || '5000'); // ms
 const DATA = path.join(__dirname, 'data', 'canvas.json');
 const HIST = path.join(__dirname, 'data', 'history.jsonl');
 const AI_KEY = process.env.AI_KEY || 'rhysen';
+const view = require('./view');
 
 // 望舒版色板 v0.1 — 33 色
 const PALETTE = [
@@ -115,6 +116,21 @@ app.get('/api/ascii', (req, res) => {
     rows.push(s.trim());
   }
   res.type('text/plain').send(`# ${W}x${H}, palette index hex\n` + rows.join('\n'));
+});
+
+// AI 看画布：图
+app.get('/api/png', (req, res) => {
+  const q = req.query;
+  const scale = Math.max(2, Math.min(32, +q.scale || 16));
+  const png = view.renderPNG({ W, H, cells, palette: PALETTE, scale, x0: +q.x || 0, y0: +q.y || 0, w: +q.w || W - (+q.x || 0), h: +q.h || H - (+q.y || 0) });
+  res.type('image/png').send(png);
+});
+// AI 看画布：整幅压缩文字
+app.get('/api/rle', (req, res) => res.type('text/plain').send(view.renderRLE({ W, H, cells, owners })));
+// AI 看画布：局部窗口
+app.get('/api/window', (req, res) => {
+  const q = req.query;
+  res.type('text/plain').send(view.renderWindow({ W, H, cells, owners, times, x0: +q.x || 0, y0: +q.y || 0, w: +q.w || 16, h: +q.h || 16 }));
 });
 
 const server = http.createServer(app);
